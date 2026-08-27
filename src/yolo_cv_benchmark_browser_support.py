@@ -276,9 +276,19 @@ def _find_ir_xml(model_source: str) -> Path | None:
 
 
 def detect_model_precision(model_source: str) -> str:
-    """Infer the OpenVINO IR precision (INT8/FP16/FP32) from the model IR."""
+    """Infer the model precision (INT8/FP16/FP32) from the model artifact.
+
+    OpenVINO IR is inspected directly; other formats (e.g. TensorRT ``.engine``
+    files) fall back to the ``_int8``/``_fp16`` naming convention used by this
+    repo's export scripts.
+    """
     xml_path = _find_ir_xml(model_source)
     if xml_path is None:
+        name = Path(model_source).name.lower()
+        if "int8" in name:
+            return "INT8"
+        if "fp16" in name or "half" in name:
+            return "FP16"
         return "unknown"
     try:
         text = xml_path.read_text(errors="ignore")

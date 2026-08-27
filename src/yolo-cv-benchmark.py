@@ -41,6 +41,27 @@ MAX_AI_CORES = 32
 DEFAULT_BENCHMARK_MODELS = ("yolo26n", "yolo26s", "yolo26m", "yolo26l", "yolo26x")
 
 
+def _is_gpu_device(device: str) -> bool:
+    """True for Intel OpenVINO GPU strings or an NVIDIA CUDA device index."""
+    value = str(device).strip().lower()
+    return value.startswith(("gpu", "intel:gpu", "cuda")) or value.isdigit()
+
+
+def _is_nvidia_device(device: str) -> bool:
+    """True when ``device`` selects an NVIDIA CUDA device (not Intel OpenVINO GPU)."""
+    value = str(device).strip().lower()
+    return value.startswith("cuda") or value.isdigit()
+
+
+def _device_label(device: str) -> str:
+    """Human-readable label for the resolved inference device."""
+    if _is_nvidia_device(device):
+        return f"NVIDIA GPU (cuda:{device})"
+    if _is_gpu_device(device):
+        return "Intel GPU (intel:gpu)"
+    return f"CPU ({device})"
+
+
 def _prefetch_openvino_models(models_dir: str, imgsz: int | tuple[int, int]) -> None:
     """Ensure the standard benchmark model set exists under ``models_dir``."""
     root = Path(models_dir)
@@ -599,8 +620,7 @@ def _render_index(
 
     model_display = os.path.splitext(static_info["model_name"])[0]
     device_str = str(static_info.get("device", "cpu"))
-    on_gpu = device_str.lower().startswith(("gpu", "intel:gpu"))
-    device_label = "Intel GPU" if on_gpu else "CPU"
+    device_label = _device_label(device_str)
     header_line = (
         f"CPU: {escape(static_info['cpu_model'])} &nbsp;&#124;&nbsp; "
         f"Device: {escape(device_label)} &nbsp;&#124;&nbsp; "
@@ -906,6 +926,13 @@ def main(argv=None) -> int:
              "('intel:gpu') instead of the CPU. Overrides --device when set.",
     )
     parser.add_argument(
+        "--nvidia-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run inference on an NVIDIA GPU (CUDA device 0) instead of the CPU, "
+             "e.g. with a TensorRT .engine model. Overrides --device when set.",
+    )
+    parser.add_argument(
         "--input-fps",
         type=float,
         default=0.0,
@@ -958,11 +985,13 @@ def main(argv=None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    # A dedicated GPU toggle maps to OpenVINO's Intel GPU device. It takes
-    # precedence over --device so the flag is unambiguous.
+    # Dedicated GPU toggles map to a concrete device string. They take
+    # precedence over --device so the flags are unambiguous.
     if args.gpu:
         args.device = "intel:gpu"
-    on_gpu = str(args.device).lower().startswith(("gpu", "intel:gpu"))
+    elif args.nvidia_gpu:
+        args.device = "0"
+    on_gpu = _is_gpu_device(args.device)
 
     # The bundled default targets an INT8 IR, which only benchmarks reliably on
     # CPUs with an accelerated INT8 dot-product path (AMX-INT8/AVX-512
@@ -1159,8 +1188,7 @@ def main(argv=None) -> int:
     )
 
     bind_host = "localhost" if args.host == "0.0.0.0" else args.host
-    device_label = "Intel GPU (intel:gpu)" if on_gpu else f"CPU ({args.device})"
-    print(f"Inference device: {device_label}")
+    print(f"Inference device: {_device_label(args.device)}")
     print(f"AMX requested: {args.amx} | effective: {'ON' if amx_effective else 'OFF'}")
     print(f"Open Chrome at http://{bind_host}:{args.port}/")
     print(f"Composite dashboard MJPEG endpoint: http://{bind_host}:{args.port}/dashboard.mjpg")
