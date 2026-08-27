@@ -1,1 +1,1 @@
-# xeon-ai-yolo
+# mcdonalds-fingermark-yolo26
