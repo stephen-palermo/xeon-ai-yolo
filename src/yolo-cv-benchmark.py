@@ -33,7 +33,7 @@ from http import server
 from html import escape
 from pathlib import Path
 
-import yolo as support
+import yolo_cv_benchmark_browser_support as support
 from amx_detect import AmxStatus, detect_amx
 
 
@@ -836,27 +836,15 @@ def _active_precision_tags() -> list[str]:
 
 
 def _report_cpu_ai_accelerators() -> None:
-    """Print AMX status and other on-CPU AI accelerators to the terminal."""
-    # (1) AMX detection — the same report as `python src/amx_detect.py`.
-    from amx_detect import format_report  # noqa: PLC0415
-
-    print("=" * 60)
-    print(format_report(detect_amx()))
-    print("=" * 60)
-
-    # (2) Other CPU accelerators that help AI workloads (server AND client CPUs).
-    print("Other CPU AI accelerators:")
-    flags = _read_cpu_flags()
-    if not flags:
-        print("  (CPU feature flags unavailable on this platform)")
-    else:
-        present = [(flag, desc) for flag, desc in _AI_ACCEL_FLAGS if flag in flags]
-        if present:
-            for flag, desc in present:
-                print(f"  {flag:<16} {desc}")
-        else:
-            print("  (no AI-relevant vector/matrix extensions detected)")
-    print("=" * 60)
+    """Print a single-line summary of CPU AI accelerators to the terminal."""
+    amx = detect_amx()
+    amx_bits = [name for name, present in (
+        ("TILE", amx.amx_tile), ("BF16", amx.amx_bf16), ("INT8", amx.amx_int8)
+    ) if present]
+    amx_text = f"AMX({'+'.join(amx_bits) if amx_bits else 'none'}, {'usable' if amx.usable else 'not usable'})"
+    others = _active_ai_accelerators()
+    others_text = ", ".join(others) if others else "none"
+    print(f"CPU AI accelerators: {amx_text} | {others_text}")
 
 
 # ---------------------------------------------------------------------------
