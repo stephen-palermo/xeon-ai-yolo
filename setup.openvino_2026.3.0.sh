@@ -23,6 +23,9 @@ pip install --upgrade pip
 echo "Installing OpenVINO 2026.3.0"
 pip install openvino==2026.3.0
 
+echo "Installing CPU-only PyTorch (avoids ~2.5 GB of unused CUDA packages)"
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 echo "Installing Ultralytics (YOLO26), headless OpenCV, and NNCF (INT8 export)"
 pip install ultralytics opencv-python-headless nncf
 
