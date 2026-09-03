@@ -1,1 +1,1 @@
-# mcdonalds-fingermark-yolo26
+# yolo26
