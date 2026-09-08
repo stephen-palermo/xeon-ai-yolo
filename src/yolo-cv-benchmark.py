@@ -910,8 +910,10 @@ def main(argv=None) -> int:
     parser.add_argument("--rtsp-frame-size", default="640x360", help="Optional pre-inference frame size WIDTHxHEIGHT (e.g. 640x360).")
     parser.add_argument(
         "--imgsz",
-        default="640x384",
-        help="Inference image size as N or WIDTHxHEIGHT. Must be a multiple of 32; default 640x384 fits a 640x360 stream with minimal padding.",
+        default="640x640",
+        help="Inference image size as N or WIDTHxHEIGHT. Must be a multiple of 32; default 640x640 "
+             "(a 640x360 stream is letterboxed to this square, adding ~43% padding rows). Use 640x384 "
+             "to match a 640x360 stream with minimal padding and ~1.67x less compute.",
     )
     parser.add_argument(
         "--device",
