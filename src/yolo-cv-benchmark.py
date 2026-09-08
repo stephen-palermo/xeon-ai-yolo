@@ -516,7 +516,8 @@ def _run_metrics_loop(
     model_display = os.path.splitext(static_info.get("model_name", ""))[0]
     model_precision = str(static_info.get("inference_precision", "unknown"))
     system_line = (
-        f"[System INFO]  CPU: {cpu_number} | MODEL: {model_display} / {model_precision}"
+        f"[System INFO]  CPU: {cpu_number} | TURBO: {static_info.get('cpu_turbo', 'unknown')} | "
+        f"MODEL: {model_display} / {model_precision}"
     )
     video_line = (
         f"[Video INFO] RTSP input {static_info.get('rtsp_frame_size', 'unknown')} | "
@@ -1133,6 +1134,7 @@ def main(argv=None) -> int:
     # Static header snapshot, collected once before the FPS benchmark runs.
     static_info = {
         "cpu_model": support.read_cpu_model(),
+        "cpu_turbo": support.read_cpu_turbo(),
         "core_count": support.read_core_count(),
         "gdc_version": support.read_gdc_version(),
         "cores_available": len(cores),
@@ -1196,6 +1198,7 @@ def main(argv=None) -> int:
 
     bind_host = "localhost" if args.host == "0.0.0.0" else args.host
     print(f"Inference device: {_device_label(args.device)}")
+    print(f"CPU turbo: {static_info['cpu_turbo']}")
     print(f"AMX requested: {args.amx} | effective: {'ON' if amx_effective else 'OFF'}")
     print(f"Open Chrome at http://{bind_host}:{args.port}/")
     print(f"Composite dashboard MJPEG endpoint: http://{bind_host}:{args.port}/dashboard.mjpg")

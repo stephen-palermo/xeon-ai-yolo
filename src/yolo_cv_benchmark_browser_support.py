@@ -417,6 +417,25 @@ def read_cpu_model() -> str:
     return "unknown"
 
 
+def read_cpu_turbo() -> str:
+    """Return CPU turbo/boost state as 'ON', 'OFF', or 'unknown' (Linux).
+
+    Reads the Intel P-state driver first (``no_turbo``: 0 = turbo on, 1 = off),
+    then the generic cpufreq ``boost`` flag (1 = on, 0 = off).
+    """
+    try:
+        with open("/sys/devices/system/cpu/intel_pstate/no_turbo", "r", encoding="ascii") as handle:
+            return "OFF" if handle.read().strip() == "1" else "ON"
+    except OSError:
+        pass
+    try:
+        with open("/sys/devices/system/cpu/cpufreq/boost", "r", encoding="ascii") as handle:
+            return "ON" if handle.read().strip() == "1" else "OFF"
+    except OSError:
+        pass
+    return "unknown"
+
+
 def read_core_count() -> int:
     """Return the number of CPU cores this process may run on (CPU affinity)."""
     import os  # noqa: PLC0415
