@@ -442,12 +442,13 @@ def available_cores() -> list[int]:
 
 
 def smt_sibling_cores() -> set[int]:
-    """Return logical CPU IDs that are SMT (hyperthread) siblings.
+    """Return logical CPU IDs backed by a hyperthreaded (SMT) physical core.
 
-    A "virtual" core is the non-primary thread of a physical core: for each
-    physical core we keep the lowest-numbered logical CPU as the real thread and
-    flag the rest. Reads Linux topology; returns an empty set when unavailable
-    (e.g. non-Linux or SMT disabled).
+    When hyperthreading is ON, a physical core is split into two logical CPUs
+    that share the same execution units, so *each* of those logical CPUs is a
+    "virtual" core rather than a dedicated physical one. We therefore flag every
+    logical CPU whose physical core exposes more than one thread sibling. Reads
+    Linux topology; returns an empty set when unavailable (non-Linux or SMT off).
     """
     import glob  # noqa: PLC0415
 
@@ -466,8 +467,8 @@ def smt_sibling_cores() -> set[int]:
             elif token:
                 siblings.append(int(token))
         if len(siblings) > 1:
-            # Keep the lowest as the physical thread; the rest are virtual.
-            virtual.update(sorted(siblings)[1:])
+            # SMT active on this physical core: every sibling is a virtual thread.
+            virtual.update(siblings)
     return virtual
 
 
@@ -476,8 +477,9 @@ def format_core_assignments(
 ) -> str:
     """Render per-model core assignments, tagging SMT/virtual cores with '*'.
 
-    Appends a '(*=virtual/SMT core)' legend when any assigned core is virtual so
-    the terminal/dashboard clearly reports when a hyperthread sibling is in use.
+    Appends a '(*=virtual/SMT core, hyperthreading on)' legend when any assigned
+    core is a hyperthread thread so the terminal/dashboard clearly reports that a
+    virtual core (not a dedicated physical core) is in use.
     """
     groups: list[str] = []
     any_virtual = False
@@ -492,7 +494,7 @@ def format_core_assignments(
         groups.append("[" + ", ".join(labels) + "]")
     rendered = "[" + ", ".join(groups) + "]"
     if any_virtual:
-        rendered += " (*=virtual/SMT core)"
+        rendered += " (*=virtual/SMT core, hyperthreading on)"
     return rendered
 
 
