@@ -532,7 +532,7 @@ def _run_metrics_loop(
     ai_line = (
         f"[AI INFO] OpenVino: {openvino_status} | "
         f"threads/model: {static_info.get('threads_per_model')} | "
-        f"core assignments: {static_info.get('core_assignments')}"
+        f"core assignments: {static_info.get('core_assignments_display') or static_info.get('core_assignments')}"
     )
 
     throttle = static_info.get("input_fps_throttle", 0.0) or 0.0
@@ -634,7 +634,7 @@ def _render_index(
     header_line2 = (
         f"OpenVINO: {openvino_status} &nbsp;&#124;&nbsp; "
         f"threads/model: {static_info['threads_per_model']} &nbsp;&#124;&nbsp; "
-        f"core assignments: {escape(str(static_info['core_assignments']))}"
+        f"core assignments: {escape(str(static_info.get('core_assignments_display') or static_info['core_assignments']))}"
     )
     # Per-camera effective input rate only. When throttling is enabled, this is
     # --input-fps; otherwise it is the measured camera input rate.
@@ -1064,9 +1064,13 @@ def main(argv=None) -> int:
         for i in range(len(rtsp_sources))
     ]
     assigned_core_ids = sorted({cid for subset in core_assignments for cid in subset})
+    virtual_cores = support.smt_sibling_cores()
+    core_assignments_display = support.format_core_assignments(
+        core_assignments, virtual_cores
+    )
     print(
         f"Cores available: {len(cores)} | threads/model: {threads_per_model} | "
-        f"core assignments: {core_assignments}"
+        f"core assignments: {core_assignments_display}"
     )
 
     print(f"Validating {len(rtsp_sources)} RTSP stream(s)...")
@@ -1132,6 +1136,7 @@ def main(argv=None) -> int:
         "cores_available": len(cores),
         "threads_per_model": threads_per_model,
         "core_assignments": core_assignments,
+        "core_assignments_display": core_assignments_display,
         "device": args.device,
         "model_name": os.path.basename(str(args.model)),
         "openvino_enabled": openvino_enabled,

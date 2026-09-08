@@ -441,6 +441,61 @@ def available_cores() -> list[int]:
         return list(range(os.cpu_count() or 1))
 
 
+def smt_sibling_cores() -> set[int]:
+    """Return logical CPU IDs that are SMT (hyperthread) siblings.
+
+    A "virtual" core is the non-primary thread of a physical core: for each
+    physical core we keep the lowest-numbered logical CPU as the real thread and
+    flag the rest. Reads Linux topology; returns an empty set when unavailable
+    (e.g. non-Linux or SMT disabled).
+    """
+    import glob  # noqa: PLC0415
+
+    virtual: set[int] = set()
+    for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list"):
+        try:
+            with open(path, "r", encoding="ascii") as handle:
+                raw = handle.read().strip()
+        except OSError:
+            continue
+        siblings: list[int] = []
+        for token in raw.replace(",", " ").split():
+            if "-" in token:
+                start, _, end = token.partition("-")
+                siblings.extend(range(int(start), int(end) + 1))
+            elif token:
+                siblings.append(int(token))
+        if len(siblings) > 1:
+            # Keep the lowest as the physical thread; the rest are virtual.
+            virtual.update(sorted(siblings)[1:])
+    return virtual
+
+
+def format_core_assignments(
+    core_assignments: list[list[int]], virtual_cores: set[int]
+) -> str:
+    """Render per-model core assignments, tagging SMT/virtual cores with '*'.
+
+    Appends a '(*=virtual/SMT core)' legend when any assigned core is virtual so
+    the terminal/dashboard clearly reports when a hyperthread sibling is in use.
+    """
+    groups: list[str] = []
+    any_virtual = False
+    for subset in core_assignments:
+        labels: list[str] = []
+        for cid in subset:
+            if cid in virtual_cores:
+                any_virtual = True
+                labels.append(f"{cid}*")
+            else:
+                labels.append(str(cid))
+        groups.append("[" + ", ".join(labels) + "]")
+    rendered = "[" + ", ".join(groups) + "]"
+    if any_virtual:
+        rendered += " (*=virtual/SMT core)"
+    return rendered
+
+
 def read_gdc_version() -> str:
     """Return the first node's kubelet version via kubectl. Startup only."""
     import subprocess  # noqa: PLC0415
