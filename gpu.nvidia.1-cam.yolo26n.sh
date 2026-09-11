@@ -1,6 +1,6 @@
 python src/download_yolo26_tensorrt.py --variant n --imgsz 640x360 --int8
 
-# NVIDIA GPU run (e.g. an L4 already installed in the server) via TensorRT.
+# NVIDIA GPU run (any Ada/Hopper/Blackwell card, e.g. L4 or B200) via TensorRT.
 # Requires the NVIDIA driver + TensorRT to be installed and the GPU visible:
 #   nvidia-smi
 #   python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
