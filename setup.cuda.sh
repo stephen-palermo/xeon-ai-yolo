@@ -33,6 +33,21 @@ pip install ultralytics opencv-python-headless
 echo "Installing the TensorRT export toolchain (ONNX -> TensorRT .engine)"
 pip install onnx onnxslim onnxruntime-gpu "tensorrt-cu13>=7.0.0,!=10.2.0"
 
+# Fail fast with an actionable message instead of a cryptic export traceback if
+# PyTorch cannot see a GPU (missing/old driver, or container without GPU passthrough).
+echo "Verifying PyTorch can see a CUDA GPU"
+if ! python -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+	echo "ERROR: torch.cuda.is_available() is False — no usable CUDA GPU detected." >&2
+	echo "  Check the following on this host:" >&2
+	echo "    1. 'nvidia-smi' works and shows an R570+ driver (required for cu128)." >&2
+	echo "    2. If in a container, it was started with GPU passthrough (docker --gpus all" >&2
+	echo "       or --runtime=nvidia, with nvidia-container-toolkit installed)." >&2
+	echo "    3. If the driver is older than cu128 needs, either upgrade it or reinstall" >&2
+	echo "       torch for your driver's CUDA (e.g. --index-url .../whl/cu126)." >&2
+	nvidia-smi || echo "  ('nvidia-smi' not found or failed — driver/GPU not visible.)" >&2
+	exit 1
+fi
+
 echo "Exporting INT8 YOLO26n engine for a 640x360 stream"
 python ./src/download_yolo26_tensorrt.py --int8 --imgsz 640x360
 
