@@ -13,15 +13,31 @@ VENV_DIR="venv_openvino_2026.4"
 # calibration, so pick a supported interpreter (3.10-3.13) if available.
 PYTHON_CMD=""
 for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        ver="$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-        case "$ver" in
-            # Store the resolved path so the later `-x` check works ($candidate
-            # is a PATH name; `-x` only tests the current directory otherwise).
-            3.10|3.11|3.12|3.13) PYTHON_CMD="$(command -v "$candidate")"; break ;;
-        esac
-    fi
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    # A pyenv shim can resolve but still fail to run (version not set global),
+    # so tolerate a failing probe and just move on to the next candidate.
+    ver="$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" || continue
+    case "$ver" in
+        # Store the resolved path so the later `-x` check works ($candidate
+        # is a PATH name; `-x` only tests the current directory otherwise).
+        3.10|3.11|3.12|3.13) PYTHON_CMD="$(command -v "$candidate")"; break ;;
+    esac
 done
+
+# pyenv often has a supported interpreter installed but not active. Point at the
+# real binary under $(pyenv root)/versions to bypass the shim entirely.
+if [ -z "$PYTHON_CMD" ] && command -v pyenv >/dev/null 2>&1; then
+    pyroot="$(pyenv root 2>/dev/null)"
+    for v in $(pyenv versions --bare --skip-aliases 2>/dev/null | grep -v '/envs/' | sort -rV); do
+        case "$v" in
+            3.10.*|3.11.*|3.12.*|3.13.*)
+                if [ -x "$pyroot/versions/$v/bin/python" ]; then
+                    PYTHON_CMD="$pyroot/versions/$v/bin/python"
+                    break
+                fi ;;
+        esac
+    done
+fi
 
 # No system interpreter in the supported range: provision one with uv, which
 # downloads a standalone CPython without touching the system Python.
