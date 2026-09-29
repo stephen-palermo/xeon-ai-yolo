@@ -49,6 +49,7 @@ print('torch+OV outputs:', len(compiled(x)), flush=True)
 """
 
 _ULTRALYTICS = """
+import faulthandler; faulthandler.enable()
 import numpy as np
 from ultralytics import YOLO
 model = YOLO(r'''{model_dir}''', task='detect')
