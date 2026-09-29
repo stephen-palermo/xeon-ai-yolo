@@ -80,7 +80,7 @@ import openvino as ov
 _orig = ov.Core.compile_model
 def _cm(self, model, device_name=None, config=None, *a, **k):
     if str(device_name or '').upper() in ('', 'CPU', 'AUTO'):
-        config = dict(config or {})
+        config = dict(config or {{}})
         config.setdefault('INFERENCE_PRECISION_HINT', ov.Type.f32)
     return _orig(self, model, device_name, config, *a, **k)
 ov.Core.compile_model = _cm
