@@ -92,14 +92,15 @@ echo "Installing Ultralytics (YOLO26), headless OpenCV, and NNCF (INT8 export)"
 pip install ultralytics opencv-python-headless nncf
 
 # Nova Lake workaround: cap oneDNN (used by both torch and OpenVINO's CPU
-# plugin) to AVX-512 VNNI for the one-time INT8 calibration. Pre-production
-# silicon advertises AVX-512 FP16/BF16 (and reports as "Genuine Intel 0000")
-# but the JIT-ed kernels for those ISAs segfault during NNCF statistics
-# collection. VNNI still accelerates INT8, and the cap only affects the kernels
-# run during calibration -- the exported INT8 IR is unchanged and runs at full
-# speed afterwards. Drop to AVX2 if AVX512_CORE_VNNI still crashes.
-echo "Exporting INT8 YOLO26 models (oneDNN capped to AVX-512 VNNI for Nova Lake)"
-ONEDNN_MAX_CPU_ISA=AVX512_CORE_VNNI \
+# plugin) to AVX2 for the one-time INT8 calibration. Pre-production silicon
+# (reports as "Genuine Intel 0000") advertises AVX-512 kernels that segfault
+# when oneDNN JITs them during NNCF statistics collection -- capping to
+# AVX512_CORE_VNNI was not enough, so avoid AVX-512 entirely here. Calibration
+# runs on 4 images, so the slower ISA is irrelevant, and the cap only affects
+# the kernels run during calibration -- the exported INT8 IR is unchanged.
+# ONEDNN_ and legacy DNNL_ names are both set so either oneDNN build honors it.
+echo "Exporting INT8 YOLO26 models (oneDNN capped to AVX2 for Nova Lake)"
+ONEDNN_MAX_CPU_ISA=AVX2 DNNL_MAX_CPU_ISA=AVX2 \
     python ./src/download_yolo26.py --int8 --imgsz 640x360 640x480 640x640 720p 1280x768
 
 echo ""
