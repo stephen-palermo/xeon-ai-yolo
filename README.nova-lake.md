@@ -111,3 +111,26 @@ python -c "import openvino as ov; print(ov.Core().available_devices)"
 Both runs serve a live dashboard at `http://<host>:8080`. Because CPU and GPU use
 the **same FP16 model** at `640x640` over the same stream, their FPS / latency /
 utilization numbers are directly comparable.
+
+### 5. Foundation computer-Vision AI Workload: 8x8x8
+
+The 8x8x8 workload scales the benchmark to **8 concurrent camera streams across 8
+CPU cores** (and the iGPU), driving the same FP16 YOLO26 model on all feeds at
+once — a foundational, sustained computer-vision AI load rather than a single
+stream. As with the `1x1x8` runs, the CPU and GPU use the **same FP16 model** at
+`640x640` over identical streams, so their FPS / latency / utilization numbers
+are directly comparable.
+
+Start the RTSP stream first (Terminals 1 and 2 from step 2), then run:
+
+```bash
+# CPU — 8 streams pinned to cores 0-7
+./recorded.8x8x8.nova-lake.yolo26n.sh
+```
+
+```bash
+# GPU — 8 streams on the Nova Lake iGPU
+./recorded.8x8x8.nova-lake-gpu.yolo26n.sh
+```
+
+Both serve the live dashboard at `http://<host>:8080`.
