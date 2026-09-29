@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Isolate whether OpenVINO can execute the YOLO26 IR on this machine.
+"""Isolate what makes YOLO26 inference segfault on this machine.
 
-Runs several device/precision configurations, each in its own subprocess, so a
-native segfault in one trial is reported (exit code) instead of killing the
-harness. Use to pinpoint OpenVINO/silicon crashes independently of Ultralytics
-and the benchmark pipeline.
+Each trial runs in its own subprocess, so a native segfault is reported as an
+exit code instead of killing the harness. Trials progressively add the layers
+the benchmark uses (raw OpenVINO -> torch+OpenVINO -> Ultralytics -> Ultralytics
+in a background thread) to pinpoint which layer crashes.
 
   python src/ov_cpu_smoketest.py --model models/yolo26n_640x640_openvino_model
 """
@@ -12,7 +12,6 @@ and the benchmark pipeline.
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,34 +27,57 @@ def _find_xml(model_dir: str) -> str:
     return str(candidates[0])
 
 
-def _run_trial(xml: str, device: str, precision: str, isa: str) -> int:
-    """One isolated trial: compile + one inference. Returns process exit code."""
-    env = dict(os.environ)
-    if isa:
-        env["ONEDNN_MAX_CPU_ISA"] = isa
-    else:
-        env.pop("ONEDNN_MAX_CPU_ISA", None)
-    code = (
-        "import numpy as np, openvino as ov\n"
-        f"xml = r'''{xml}'''\n"
-        f"device = '{device}'\n"
-        f"precision = '{precision}'\n"
-        "core = ov.Core()\n"
-        "print('available:', core.available_devices, flush=True)\n"
-        "model = core.read_model(xml)\n"
-        "config = {'PERFORMANCE_HINT': 'LATENCY'}\n"
-        "if precision:\n"
-        "    config['INFERENCE_PRECISION_HINT'] = getattr(ov.Type, precision)\n"
-        "compiled = core.compile_model(model, device, config)\n"
-        "print('compiled on', compiled.get_property('EXECUTION_DEVICES'), flush=True)\n"
-        "port = compiled.input()\n"
-        "shape = [d if isinstance(d, int) and d > 0 else 1 for d in port.get_partial_shape().get_max_shape()] if not port.get_partial_shape().is_dynamic else [1,3,640,640]\n"
-        "x = np.random.rand(*shape).astype(np.float32)\n"
-        "out = compiled(x)\n"
-        "print('inference OK, outputs:', len(out), flush=True)\n"
-    )
-    proc = subprocess.run([sys.executable, "-c", code], env=env)
-    return proc.returncode
+# --- Trial bodies (run as `python -c <code>` subprocesses) -------------------
+_RAW_OV = """
+import numpy as np, openvino as ov
+core = ov.Core()
+model = core.read_model(r'''{xml}''')
+compiled = core.compile_model(model, 'CPU', {{'PERFORMANCE_HINT': 'LATENCY', 'INFERENCE_PRECISION_HINT': ov.Type.f32}})
+x = np.random.rand(1, 3, 640, 640).astype(np.float32)
+print('raw OV outputs:', len(compiled(x)), flush=True)
+"""
+
+_TORCH_THEN_OV = """
+import torch  # imported first, like Ultralytics
+import numpy as np, openvino as ov
+print('torch', torch.__version__, 'threads', torch.get_num_threads(), flush=True)
+core = ov.Core()
+model = core.read_model(r'''{xml}''')
+compiled = core.compile_model(model, 'CPU', {{'PERFORMANCE_HINT': 'LATENCY', 'INFERENCE_PRECISION_HINT': ov.Type.f32}})
+x = np.random.rand(1, 3, 640, 640).astype(np.float32)
+print('torch+OV outputs:', len(compiled(x)), flush=True)
+"""
+
+_ULTRALYTICS = """
+import numpy as np
+from ultralytics import YOLO
+model = YOLO(r'''{model_dir}''', task='detect')
+frame = (np.random.rand(608, 1080, 3) * 255).astype('uint8')
+r = model.predict([frame], imgsz=640, device='intel:cpu', verbose=False)
+print('ultralytics predict OK, results:', len(r), flush=True)
+"""
+
+_ULTRALYTICS_THREAD = """
+import threading, numpy as np
+from ultralytics import YOLO
+err = {{}}
+def run():
+    try:
+        model = YOLO(r'''{model_dir}''', task='detect')
+        frame = (np.random.rand(608, 1080, 3) * 255).astype('uint8')
+        r = model.predict([frame], imgsz=640, device='intel:cpu', verbose=False)
+        print('ultralytics(thread) predict OK, results:', len(r), flush=True)
+    except BaseException as e:  # noqa: BLE001
+        err['e'] = repr(e)
+t = threading.Thread(target=run)
+t.start(); t.join()
+if err:
+    print('thread error:', err['e'], flush=True); raise SystemExit(1)
+"""
+
+
+def _run(code: str) -> int:
+    return subprocess.run([sys.executable, "-c", code]).returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,23 +86,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     xml = _find_xml(args.model)
+    model_dir = str(Path(xml).parent)
     print(f"Model IR: {xml}\n")
 
-    # (label, device, precision, oneDNN ISA cap)
     trials = [
-        ("CPU default (reduced precision)", "CPU", "", ""),
-        ("CPU f32 hint", "CPU", "f32", ""),
-        ("CPU f32 hint + ISA AVX512_CORE", "CPU", "f32", "AVX512_CORE"),
-        ("CPU f32 hint + ISA AVX2", "CPU", "f32", "AVX2"),
-        ("GPU", "GPU", "", ""),
+        ("raw OpenVINO (CPU f32)", _RAW_OV.format(xml=xml)),
+        ("torch then OpenVINO (CPU f32)", _TORCH_THEN_OV.format(xml=xml)),
+        ("Ultralytics predict (CPU)", _ULTRALYTICS.format(model_dir=model_dir)),
+        ("Ultralytics predict in thread (CPU)", _ULTRALYTICS_THREAD.format(model_dir=model_dir)),
     ]
 
     results = []
-    for label, device, precision, isa in trials:
+    for label, code in trials:
         print(f"=== Trial: {label} ===", flush=True)
-        code = _run_trial(xml, device, precision, isa)
-        status = "OK" if code == 0 else (
-            f"SIGSEGV (exit {code})" if code < 0 else f"FAILED (exit {code})"
+        rc = _run(code)
+        status = "OK" if rc == 0 else (
+            f"SIGSEGV (exit {rc})" if rc < 0 else f"FAILED (exit {rc})"
         )
         print(f"--- {label}: {status}\n", flush=True)
         results.append((label, status))
