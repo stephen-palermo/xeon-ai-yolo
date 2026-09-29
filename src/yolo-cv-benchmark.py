@@ -995,7 +995,6 @@ def main(argv=None) -> int:
     elif args.nvidia_gpu:
         args.device = "0"
     on_gpu = _is_gpu_device(args.device)
-
     # The bundled default targets an INT8 IR, which only benchmarks reliably on
     # CPUs with an accelerated INT8 dot-product path (AMX-INT8/AVX-512
     # VNNI/AVX-VNNI). On a CPU without any of those (or when running on the
@@ -1018,6 +1017,13 @@ def main(argv=None) -> int:
 
     if args.download_all_models:
         _prefetch_openvino_models(args.models_dir, args.imgsz)
+
+    # Pin OpenVINO to CPU explicitly for the non-GPU path. Ultralytics otherwise
+    # compiles OpenVINO models with AUTO device selection, which prefers the
+    # integrated GPU when present (e.g. Nova Lake) and would run the CPU
+    # benchmark on GPU.0. Servers without an iGPU are unaffected.
+    if not on_gpu and support.is_openvino_model(str(args.model)):
+        args.device = "intel:cpu"
 
     # AMX ISA control (must precede OpenVINO native import).
     support.configure_amx(args.amx == "on")
