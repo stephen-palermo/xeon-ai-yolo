@@ -358,6 +358,31 @@ def open_rtsp_capture(source: str):
     return capture
 
 
+def _parse_rtsp_endpoint(source: str) -> tuple[str | None, int]:
+    """Return (host, port) for an ``rtsp://`` URL, or (None, 0) if not RTSP."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(source)
+    if parsed.scheme != "rtsp" or not parsed.hostname:
+        return None, 0
+    return parsed.hostname, parsed.port or 554
+
+
+def _wait_for_tcp(host: str, port: int, timeout: float) -> bool:
+    """Return True once a TCP connection to host:port succeeds within timeout."""
+    import socket  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2.0):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
 def validate_rtsp_stream(source: str) -> tuple[bool, float, str]:
     """Validate an RTSP stream and read its advertised FPS.
 
@@ -366,6 +391,14 @@ def validate_rtsp_stream(source: str) -> tuple[bool, float, str]:
     import time  # noqa: PLC0415
 
     import cv2  # noqa: PLC0415
+
+    # Probe TCP reachability of the RTSP endpoint first. Hammering the OpenCV
+    # FFmpeg backend with repeated open/release cycles against a dead endpoint
+    # can segfault the native demuxer, so we wait (via a cheap socket connect)
+    # until the port actually accepts connections before touching FFmpeg.
+    host, port = _parse_rtsp_endpoint(source)
+    if host is not None and not _wait_for_tcp(host, port, timeout=15.0):
+        return False, 0.0, f"Unable to open RTSP stream: {source}"
 
     capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     if not capture.isOpened():
