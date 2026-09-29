@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Lake — Edge AI Computer-Vision Benchmark</title>
+<style>
+  :root {
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --link: #0969da;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    line-height: 1.6;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    background: #fff;
+  }
+  h1, h2, h3 { line-height: 1.25; font-weight: 600; }
+  h1 {
+    font-size: 2rem;
+    padding-bottom: .4em;
+    border-bottom: 1px solid var(--border);
+    margin-top: 0;
+  }
+  h2 {
+    font-size: 1.5rem;
+    padding-bottom: .3em;
+    border-bottom: 1px solid var(--border);
+    margin-top: 2.2rem;
+  }
+  h3 { font-size: 1.2rem; margin-top: 1.8rem; }
+  p { margin: .8em 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: .18em .4em;
+    border-radius: 6px;
+    font-size: 85%;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 85%;
+    line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; font-size: 100%; }
+  blockquote {
+    margin: 1em 0;
+    padding: .2em 1em;
+    color: var(--muted);
+    border-left: .3em solid var(--border);
+    background: #fafbfc;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.2em 0;
+    font-size: 92%;
+    display: block;
+    overflow-x: auto;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: .5em .75em;
+    text-align: left;
+    vertical-align: top;
+  }
+  thead th { background: var(--code-bg); font-weight: 600; }
+  tbody tr:nth-child(even) { background: #fafbfc; }
+  .comment { color: #6a737d; }
+</style>
+</head>
+<body>
+
+<h1>Nova Lake — Edge AI Computer-Vision Benchmark</h1>
+
+<h2>Welcome</h2>
+
+<p>This repository is a <strong>foundational Edge AI computer-vision benchmark</strong> built to
+optimize <strong>Intel architecture</strong>. It runs a real-time YOLO26 object-detection
+pipeline over live and recorded RTSP camera streams and measures throughput
+(FPS), latency, and CPU/GPU utilization under controlled core and camera counts.</p>
+
+<p>The goal goes beyond a single score. The benchmark is used to <strong>profile Intel
+silicon</strong> — CPU vector/AI ISA extensions and the integrated GPU — on a
+representative vision workload, and to turn those profiles into <strong>silicon
+manufacturing feedback</strong>: identifying where instruction-set accelerators,
+memory bandwidth, and the iGPU help (or bottleneck) YOLO inference so that
+<strong>future generations of Intel CPUs and GPUs</strong> can be tuned for Edge AI. Running
+it on pre-production parts like <strong>Nova Lake</strong> produces early, workload-grounded
+data that feeds directly back into architecture and manufacturing decisions.</p>
+
+<h2>Author</h2>
+
+<p><strong>Created by Stephen Palermo</strong> — Tech Lead, Xeon Edge AI.</p>
+
+<h2>Clone the repository</h2>
+
+<pre><code>git clone https://github.com/stephen-palermo/xeon-ai-yolo.git
+cd xeon-ai-yolo</code></pre>
+
+<h2>Nova Lake CPU accelerators for AI computer vision</h2>
+
+<p>Nova Lake exposes a broad set of on-CPU instruction-set accelerators. The table
+below lists the ones most relevant to YOLO / computer-vision inference and how
+each can help the workload. (Capabilities are read from <code>lscpu</code> <code>Flags</code>; this
+pre-production part reports <strong>no AMX</strong> tile unit, so INT8 acceleration comes from
+the AVX-512 VNNI / AVX-VNNI dot-product path rather than AMX.)</p>
+
+<table>
+<thead>
+<tr><th>Accelerator (CPU flag)</th><th>What it is</th><th>How it helps YOLO / vision inference</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>AVX-512 Foundation</strong> (<code>avx512f</code>, <code>avx512dq</code>, <code>avx512bw</code>, <code>avx512vl</code>, <code>avx512cd</code>)</td><td>512-bit wide SIMD across int/float, masked and per-lane</td><td>Wide vectorization of convolution, GEMM, and element-wise layers — the backbone of FP32/FP16 inference</td></tr>
+<tr><td><strong>AVX-512 VNNI</strong> (<code>avx512_vnni</code>)</td><td>Vector Neural Network Instructions: fused INT8 multiply-accumulate (<code>VPDPBUSD</code>)</td><td>Accelerates <strong>INT8</strong> convolutions/GEMM — the primary quantized inference path on this part (no AMX)</td></tr>
+<tr><td><strong>AVX-VNNI</strong> (<code>avx_vnni</code>)</td><td>VNNI dot-product on the 256-bit AVX path</td><td>INT8 acceleration for code/threads that stay on AVX2-width kernels; broad client compatibility</td></tr>
+<tr><td><strong>AVX-512 BF16</strong> (<code>avx512_bf16</code>)</td><td>Native bfloat16 dot-product</td><td>Fast <strong>BF16</strong> float inference at ~half the memory traffic of FP32 with minimal accuracy loss</td></tr>
+<tr><td><strong>AVX-512 FP16</strong> (<code>avx512_fp16</code>)</td><td>Native IEEE half-precision arithmetic</td><td><strong>FP16</strong> inference (the precision this benchmark exports for Nova Lake) with full-rate half-precision math</td></tr>
+<tr><td><strong>AVX-512 IFMA</strong> (<code>avx512ifma</code>)</td><td>52-bit integer fused multiply-add</td><td>Speeds high-precision integer/fixed-point pre/post-processing and some quantization math</td></tr>
+<tr><td><strong>AVX-512 VBMI / VBMI2</strong> (<code>avx512vbmi</code>, <code>avx512_vbmi2</code>)</td><td>Byte-level permute / shift-into</td><td>Fast tensor layout changes, packing/unpacking, and NHWC↔NCHW shuffles around conv layers</td></tr>
+<tr><td><strong>AVX-512 BITALG / VPOPCNTDQ</strong> (<code>avx512_bitalg</code>, <code>avx512_vpopcntdq</code>)</td><td>Bit manipulation and vector popcount</td><td>Helps NMS-style masking, sparsity handling, and bit-packed feature ops</td></tr>
+<tr><td><strong>GFNI / VAES / VPCLMULQDQ</strong> (<code>gfni</code>, <code>vaes</code>, <code>vpclmulqdq</code>)</td><td>Galois-field, vector AES/carryless-multiply</td><td>Accelerates encrypted stream ingest and integrity checks so crypto doesn't steal cycles from inference</td></tr>
+<tr><td><strong>SHA-NI</strong> (<code>sha_ni</code>)</td><td>Hardware SHA hashing</td><td>Fast frame/model hashing and secure pipeline attestation with negligible CPU cost</td></tr>
+<tr><td><strong>MOVDIRI / MOVDIR64B</strong> (<code>movdiri</code>, <code>movdir64b</code>)</td><td>Direct stores / 64-byte atomic write</td><td>Efficient doorbell/descriptor writes for feeding the iGPU and other accelerators</td></tr>
+<tr><td><strong>Hardware-Feedback / Thread Director</strong> (<code>hfi</code>, <code>hwp</code>, <code>hwp_epp</code>)</td><td>OS hints for per-core performance/efficiency</td><td>Steers inference threads to the best cores, improving sustained FPS and perf/watt on hybrid topologies</td></tr>
+<tr><td><strong>CET</strong> (<code>user_shstk</code>, <code>ibt</code>), <code>serialize</code></td><td>Control-flow integrity, ordering</td><td>Hardened, deterministic execution for an always-on edge service — reliability rather than raw speed</td></tr>
+</tbody>
+</table>
+
+<p><strong>Integrated GPU (Nova Lake iGPU).</strong> The same FP16 OpenVINO IR runs on the Intel
+iGPU via the <code>intel:gpu</code> device, letting you compare the CPU AI ISA path against
+the GPU on an identical model — the core apples-to-apples measurement this
+benchmark is designed for.</p>
+
+<blockquote>
+<p>Note on precision: pre-production Nova Lake segfaults during NNCF <strong>INT8</strong>
+calibration, so the Nova Lake setup exports <strong>FP16</strong> IR (which runs on both the
+CPU and the iGPU). INT8 (AVX-512 VNNI) remains the target quantized path once
+calibration is stable on production silicon.</p>
+</blockquote>
+
+<h2>Setup and run the benchmarks</h2>
+
+<h3>1. Create the virtual environment</h3>
+
+<p>Installs OpenVINO 2026.4, CPU PyTorch, Ultralytics, and exports the FP16 YOLO26
+models used by every Nova Lake benchmark:</p>
+
+<pre><code>./setup.openvino_2026.4.nova-lake.sh
+source venv_openvino_2026.4.nova-lake/bin/activate</code></pre>
+
+<h3>2. Start a test RTSP stream (two terminals)</h3>
+
+<pre><code><span class="comment"># Terminal 1 — media server</span>
+wget https://github.com/bluenviron/mediamtx/releases/download/v1.19.2/mediamtx_v1.19.2_linux_amd64.tar.gz
+tar -xzf mediamtx_v1.19.2_linux_amd64.tar.gz
+./mediamtx
+
+<span class="comment"># Terminal 2 — loop a video file into the server</span>
+chmod +x stream.ffmpeg.sh
+./stream.ffmpeg.sh</code></pre>
+
+<p><code>stream.ffmpeg.sh</code> installs ffmpeg if needed and loops <code>stairway.video.mp4</code> into
+<code>rtsp://localhost:8554/stream</code>. Override the defaults with
+<code>./stream.ffmpeg.sh &lt;video-file&gt; &lt;rtsp-url&gt;</code>.</p>
+
+<h3>3. Run on the CPU</h3>
+
+<pre><code>./1x1x8.nova-lake.yolo26n.sh</code></pre>
+
+<h3>4. Run on the Nova Lake GPU</h3>
+
+<p>The GPU run needs the Intel GPU compute runtime + Level-Zero:</p>
+
+<pre><code>sudo apt-get update &amp;&amp; sudo apt-get install -y intel-opencl-icd intel-level-zero-gpu level-zero
+<span class="comment"># Verify the GPU is visible to OpenVINO (expect 'GPU' in the list):</span>
+python -c "import openvino as ov; print(ov.Core().available_devices)"
+
+./1x1x8.nova-lake-gpu.yolo26n.sh</code></pre>
+
+<p>Both runs serve a live dashboard at <code>http://&lt;host&gt;:8080</code>. Because CPU and GPU use
+the <strong>same FP16 model</strong> at <code>640x640</code> over the same stream, their FPS / latency /
+utilization numbers are directly comparable.</p>
+
+<h3>5. Foundation computer-Vision AI Workload: 8x8x8</h3>
+
+<p>The 8x8x8 workload scales the benchmark to <strong>8 concurrent camera streams across 8
+CPU cores</strong> (and the iGPU), driving the same FP16 YOLO26 model on all feeds at
+once — a foundational, sustained computer-vision AI load rather than a single
+stream. As with the <code>1x1x8</code> runs, the CPU and GPU use the <strong>same FP16 model</strong> at
+<code>640x640</code> over identical streams, so their FPS / latency / utilization numbers
+are directly comparable.</p>
+
+<p>Start the RTSP stream first (Terminals 1 and 2 from step 2), then run:</p>
+
+<pre><code><span class="comment"># CPU — 8 streams pinned to cores 0-7</span>
+./recorded.8x8x8.nova-lake.yolo26n.sh</code></pre>
+
+<pre><code><span class="comment"># GPU — 8 streams on the Nova Lake iGPU</span>
+./recorded.8x8x8.nova-lake-gpu.yolo26n.sh</code></pre>
+
+<p>Both serve the live dashboard at <code>http://&lt;host&gt;:8080</code>.</p>
+
+</body>
+</html>
