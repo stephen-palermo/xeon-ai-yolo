@@ -23,11 +23,6 @@ MAX_RTSP_STREAMS = 32
 # This lets the same script demonstrate the AMX speedup by toggling --amx.
 _ONEDNN_ISA_AMX_ON = "AVX512_CORE_AMX"
 _ONEDNN_ISA_AMX_OFF = "AVX512_CORE_BF16"
-# Stable ISA tier for AVX-512 client silicon without AMX (e.g. pre-production
-# Nova Lake): its AVX-512 BF16/FP16 (and even AVX-512 core) oneDNN JIT kernels
-# segfault during OpenVINO CPU compile, so fall all the way back to AVX2 — the
-# most heavily-tested, stable kernel path — to keep inference running.
-_ONEDNN_ISA_CLIENT_AVX512 = "AVX2"
 
 
 def read_cpu_flags() -> set[str]:
@@ -72,12 +67,10 @@ def configure_amx(enabled: bool) -> None:
         os.environ["ONEDNN_MAX_CPU_ISA"] = (
             _ONEDNN_ISA_AMX_ON if enabled else _ONEDNN_ISA_AMX_OFF
         )
-    elif "avx512f" in read_cpu_flags():
-        # Pre-production AVX-512 client silicon (Nova Lake) has no AMX and its
-        # AVX-512 oneDNN kernels can segfault during OpenVINO compile; cap to
-        # AVX2 for a stable kernel path.
-        os.environ["ONEDNN_MAX_CPU_ISA"] = _ONEDNN_ISA_CLIENT_AVX512
     else:
+        # Non-AMX CPUs: leave the ISA uncapped. Capping below the native tier
+        # (e.g. AVX2 on AVX-512 silicon) makes the OpenVINO CPU plugin fail to
+        # build some nodes ("Supported primitive descriptors list is empty").
         os.environ.pop("ONEDNN_MAX_CPU_ISA", None)
     os.environ.setdefault("ONEDNN_VERBOSE", "0")
 
