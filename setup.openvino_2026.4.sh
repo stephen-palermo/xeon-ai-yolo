@@ -16,7 +16,9 @@ for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
     if command -v "$candidate" >/dev/null 2>&1; then
         ver="$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
         case "$ver" in
-            3.10|3.11|3.12|3.13) PYTHON_CMD="$candidate"; break ;;
+            # Store the resolved path so the later `-x` check works ($candidate
+            # is a PATH name; `-x` only tests the current directory otherwise).
+            3.10|3.11|3.12|3.13) PYTHON_CMD="$(command -v "$candidate")"; break ;;
         esac
     fi
 done
