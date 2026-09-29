@@ -1115,9 +1115,10 @@ def main(argv=None) -> int:
     )
 
     # Speed lever: pin OpenVINO CPU precision. INT8 keeps its quantized ops.
-    # For float models, run BF16 only when the CPU has hardware BF16 (AMX-BF16
-    # or AVX-512 BF16); on client CPUs without it (e.g. Panther Lake) a bf16
-    # hint forces a slow emulated path, so run native f32 for best throughput.
+    # For float models, run BF16 only on CPUs with AMX-BF16 (server Xeon), where
+    # the BF16 kernels are well-supported and fast. Non-AMX parts (client, and
+    # pre-production AVX-512 silicon like Nova Lake whose BF16/FP16 oneDNN
+    # kernels can segfault) run native f32 for stability and best throughput.
     if model_precision == "INT8":
         os.environ.pop("OV_CPU_INFERENCE_PRECISION_HINT", None)
         inference_precision = "INT8"
@@ -1125,7 +1126,7 @@ def main(argv=None) -> int:
         # The Intel GPU plugin picks its own precision (FP16 native); the CPU
         # precision hint does not apply.
         inference_precision = "FP16"
-    elif support.cpu_supports_bf16():
+    elif support.cpu_has_amx() and support.cpu_supports_bf16():
         os.environ["OV_CPU_INFERENCE_PRECISION_HINT"] = "bf16"
         inference_precision = "BF16"
     else:

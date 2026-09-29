@@ -23,6 +23,10 @@ MAX_RTSP_STREAMS = 32
 # This lets the same script demonstrate the AMX speedup by toggling --amx.
 _ONEDNN_ISA_AMX_ON = "AVX512_CORE_AMX"
 _ONEDNN_ISA_AMX_OFF = "AVX512_CORE_BF16"
+# Stable ISA tier for AVX-512 client silicon without AMX (e.g. pre-production
+# Nova Lake): keeps AVX-512 + INT8 VNNI but drops the BF16/FP16 JIT compute
+# kernels whose oneDNN paths segfault on that silicon.
+_ONEDNN_ISA_CLIENT_AVX512 = "AVX512_CORE_VNNI"
 
 
 def read_cpu_flags() -> set[str]:
@@ -67,6 +71,10 @@ def configure_amx(enabled: bool) -> None:
         os.environ["ONEDNN_MAX_CPU_ISA"] = (
             _ONEDNN_ISA_AMX_ON if enabled else _ONEDNN_ISA_AMX_OFF
         )
+    elif "avx512f" in read_cpu_flags():
+        # Pre-production AVX-512 client silicon (Nova Lake) has no AMX but its
+        # newer AVX-512 BF16/FP16 oneDNN kernels can segfault during compile.
+        os.environ["ONEDNN_MAX_CPU_ISA"] = _ONEDNN_ISA_CLIENT_AVX512
     else:
         os.environ.pop("ONEDNN_MAX_CPU_ISA", None)
     os.environ.setdefault("ONEDNN_VERBOSE", "0")
