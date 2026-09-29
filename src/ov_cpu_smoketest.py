@@ -75,6 +75,36 @@ if err:
     print('thread error:', err['e'], flush=True); raise SystemExit(1)
 """
 
+_ULTRALYTICS_F32 = """
+import openvino as ov
+_orig = ov.Core.compile_model
+def _cm(self, model, device_name=None, config=None, *a, **k):
+    if str(device_name or '').upper() in ('', 'CPU', 'AUTO'):
+        config = dict(config or {})
+        config.setdefault('INFERENCE_PRECISION_HINT', ov.Type.f32)
+    return _orig(self, model, device_name, config, *a, **k)
+ov.Core.compile_model = _cm
+import numpy as np
+from ultralytics import YOLO
+model = YOLO(r'''{model_dir}''', task='detect')
+frame = (np.random.rand(608, 1080, 3) * 255).astype('uint8')
+r = model.predict([frame], imgsz=640, device='intel:cpu', verbose=False)
+print('ultralytics f32 predict OK, results:', len(r), flush=True)
+"""
+
+_TORCHVISION_NMS = """
+import torch
+print('torch', torch.__version__, flush=True)
+import torchvision
+print('torchvision', torchvision.__version__, flush=True)
+import torchvision.ops as ops
+boxes = torch.rand(100, 4)
+boxes[:, 2:] += boxes[:, :2]
+scores = torch.rand(100)
+keep = ops.nms(boxes, scores, 0.5)
+print('torchvision nms OK, kept', len(keep), flush=True)
+"""
+
 
 def _run(code: str) -> int:
     return subprocess.run([sys.executable, "-c", code]).returncode
@@ -92,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     trials = [
         ("raw OpenVINO (CPU f32)", _RAW_OV.format(xml=xml)),
         ("torch then OpenVINO (CPU f32)", _TORCH_THEN_OV.format(xml=xml)),
+        ("torch/torchvision NMS", _TORCHVISION_NMS),
         ("Ultralytics predict (CPU)", _ULTRALYTICS.format(model_dir=model_dir)),
+        ("Ultralytics predict f32 hint (CPU)", _ULTRALYTICS_F32.format(model_dir=model_dir)),
         ("Ultralytics predict in thread (CPU)", _ULTRALYTICS_THREAD.format(model_dir=model_dir)),
     ]
 
