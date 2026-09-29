@@ -88,7 +88,9 @@ echo "Installing CPU-only PyTorch (avoids ~2.5 GB of unused CUDA packages)"
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 echo "Installing Ultralytics (YOLO26) and headless OpenCV"
-pip install ultralytics opencv-python-headless
+# Pin OpenCV < 5: the pre-release opencv-python 5.0.0 wheel segfaults in native
+# ops (cv2.resize, FFmpeg capture) on this pre-production silicon.
+pip install ultralytics "opencv-python-headless<5"
 
 # FP16, not INT8: NNCF INT8 calibration runs OpenVINO inference and segfaults on
 # this pre-production silicon. FP16 export only converts weights (no inference),
