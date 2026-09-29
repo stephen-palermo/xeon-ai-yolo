@@ -10,15 +10,11 @@ echo "ffmpeg -re -stream_loop -1 -i stairway.video.mp4 -c copy -f rtsp rtsp://lo
 
 python src/download_yolo26.py --variant n --imgsz 640x640
 
-# Rule of thumb: keep --imgsz equal to the model's exported size. Pick the resolution at export time (that's what changes performance); use --imgsz just to match it.
-# Intel Nova Lake (CPU): FP16 model. Pre-production silicon segfaults during
-# NNCF INT8 calibration, so we benchmark the FP16 IR, which also lets the exact
-# same model run on the Nova Lake GPU (see 1x1x8.nova-lake-gpu.yolo26n.sh).
-# On this part FP16 runs via AVX-512 FP16/BF16; there is no AMX, so --amx off.
+# Intel Nova Lake CPU, FP16 model (INT8 calibration segfaults on this silicon).
+# The same FP16 IR runs on the GPU via 1x1x8.nova-lake-gpu.yolo26n.sh.
 # --rtsp-frame-size 1080x608 matches the recorded stream so it passes through untouched; the model letterboxes it to 640x640 internally.
 taskset -c 0 python src/yolo-cv-benchmark.py \
         --model models/yolo26n_640x640_openvino_model \
-        --amx off \
         --input-fps 8 \
         --rtsp-frame-size 1080x608 \
         --imgsz 640x640 \

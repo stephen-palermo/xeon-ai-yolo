@@ -16,14 +16,12 @@ python src/download_yolo26.py --variant n --imgsz 640x640
 # Verify the GPU is visible:
 #   python -c "import openvino as ov; print(ov.Core().available_devices)"   # expect 'GPU'
 #
-# Same FP16 IR as the CPU run (1x1x8.nova-lake.yolo26n.sh) so CPU vs GPU is an
-# apples-to-apples comparison. The GPU plugin runs FP16 natively; --amx off is
-# harmless on the GPU path (AMX is CPU-only) but kept for symmetry.
+# Same FP16 IR as the CPU run (1x1x8.nova-lake.yolo26n.sh) so CPU vs GPU is
+# apples-to-apples.
 # --rtsp-frame-size 1080x608 matches the recorded stream so it passes through untouched; the model letterboxes it to 640x640 internally.
 python src/yolo-cv-benchmark.py \
         --gpu \
         --model models/yolo26n_640x640_openvino_model \
-        --amx off \
         --input-fps 8 \
         --rtsp-frame-size 1080x608 \
         --imgsz 640x640 \

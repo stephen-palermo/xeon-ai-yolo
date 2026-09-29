@@ -1,13 +1,9 @@
 #!/bin/bash
-# Setup script: OpenVINO 2026.4 runtime environment for YOLO26 benchmarking on
-# Intel Nova Lake. Same as setup.openvino_2026.4.sh, but exports FP16 IR instead
-# of INT8. Pre-production Nova Lake silicon (reports as "Genuine Intel 0000")
-# segfaults during NNCF INT8 calibration -- capping oneDNN to AVX-512 VNNI and
-# even AVX2 did not help, so the calibration inference simply cannot run here.
-# FP16 export does no calibration inference (it only converts weights), so it
-# can't segfault, and a single FP16 IR runs on both the CPU and the Nova Lake
-# GPU for an apples-to-apples comparison. Creates a dedicated virtual
-# environment and installs OpenVINO + Ultralytics + headless OpenCV.
+# Setup script: OpenVINO 2026.4 environment for YOLO26 benchmarking on Intel
+# Nova Lake. Exports FP16 IR (not INT8): NNCF INT8 calibration segfaults on this
+# pre-production silicon, and one FP16 IR runs on both the CPU and the Nova Lake
+# GPU. Creates a dedicated virtual environment and installs OpenVINO +
+# Ultralytics + headless OpenCV.
 
 set -e  # Exit on any error
 
@@ -94,11 +90,9 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 echo "Installing Ultralytics (YOLO26) and headless OpenCV"
 pip install ultralytics opencv-python-headless
 
-# Nova Lake exports FP16, not INT8: the NNCF INT8 calibration runs OpenVINO
-# inference on 4 images and segfaults on this pre-production silicon regardless
-# of the oneDNN ISA cap. FP16 export only converts weights (no calibration
-# inference), so it completes cleanly, and one FP16 IR runs on both the CPU and
-# the Nova Lake GPU. Sizes match the benchmark scripts (640x640 etc.).
+# FP16, not INT8: NNCF INT8 calibration runs OpenVINO inference and segfaults on
+# this pre-production silicon. FP16 export only converts weights (no inference),
+# and one FP16 IR runs on both the CPU and the Nova Lake GPU.
 echo "Exporting FP16 YOLO26 models to OpenVINO IR (runs on both CPU and GPU)"
 python ./src/download_yolo26.py --imgsz 640x360 640x480 640x640 720p 1280x768
 
