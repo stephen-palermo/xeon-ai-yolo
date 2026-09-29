@@ -22,4 +22,11 @@ if [[ ! -f "$VIDEO_FILE" ]]; then
 fi
 
 echo "Streaming '$VIDEO_FILE' -> '$RTSP_URL' (loop). Press Ctrl-C to stop."
-exec ffmpeg -re -stream_loop -1 -i "$VIDEO_FILE" -c copy -f rtsp "$RTSP_URL"
+# Re-encode to baseline-friendly H.264 (Main profile, yuv420p) over RTSP/TCP.
+# Passing the source through with `-c copy` can yield HEVC/10-bit/4:2:2 streams
+# that OpenCV's bundled FFmpeg decoder segfaults on; re-encoding guarantees a
+# stream the benchmark's capture backend can decode. Audio is dropped (-an).
+exec ffmpeg -re -stream_loop -1 -i "$VIDEO_FILE" \
+    -an -c:v libx264 -profile:v main -pix_fmt yuv420p \
+    -preset veryfast -tune zerolatency -g 30 \
+    -rtsp_transport tcp -f rtsp "$RTSP_URL"
