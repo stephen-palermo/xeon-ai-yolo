@@ -10,13 +10,13 @@ rm -rf venv_openvino_2026.4
 
 VENV_DIR="venv_openvino_2026.4"
 # torch/NNCF (TorchScript) don't support Python 3.14+ and segfault during INT8
-# calibration, so pick a supported interpreter (3.10-3.12) if available.
+# calibration, so pick a supported interpreter (3.10-3.13) if available.
 PYTHON_CMD=""
-for candidate in python3.12 python3.11 python3.10 python3; do
+for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
     if command -v "$candidate" >/dev/null 2>&1; then
         ver="$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
         case "$ver" in
-            3.10|3.11|3.12) PYTHON_CMD="$candidate"; break ;;
+            3.10|3.11|3.12|3.13) PYTHON_CMD="$candidate"; break ;;
         esac
     fi
 done
@@ -24,23 +24,28 @@ done
 # No system interpreter in the supported range: provision one with uv, which
 # downloads a standalone CPython without touching the system Python.
 if [ -z "$PYTHON_CMD" ]; then
+    # Make uv visible whether it was pre-installed or lands in ~/.local/bin.
+    export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"
+    [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     if ! command -v uv >/dev/null 2>&1; then
-        echo "No supported system Python (3.10-3.12) found; bootstrapping uv to" >&2
+        echo "No supported system Python (3.10-3.13) found; bootstrapping uv to" >&2
         echo "provision a standalone Python 3.12 (torch/NNCF INT8 segfaults on 3.14)." >&2
         curl -LsSf https://astral.sh/uv/install.sh | sh
-        # uv installs to ~/.local/bin (or $XDG_BIN_HOME); make it visible now.
         export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"
         [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     fi
-    if command -v uv >/dev/null 2>&1; then
+    # Resolve uv even if PATH still hasn't picked it up in this shell.
+    UV_BIN="$(command -v uv || true)"
+    [ -z "$UV_BIN" ] && [ -x "$HOME/.local/bin/uv" ] && UV_BIN="$HOME/.local/bin/uv"
+    if [ -n "$UV_BIN" ]; then
         echo "Provisioning standalone Python 3.12 via uv"
-        uv python install 3.12
-        PYTHON_CMD="$(uv python find 3.12)"
+        "$UV_BIN" python install 3.12
+        PYTHON_CMD="$("$UV_BIN" python find 3.12 2>/dev/null)"
     fi
 fi
 
 if [ -z "$PYTHON_CMD" ] || [ ! -x "$PYTHON_CMD" ]; then
-    echo "ERROR: No supported Python (3.10-3.12) found and uv bootstrap failed." >&2
+    echo "ERROR: No supported Python (3.10-3.13) found and uv bootstrap failed." >&2
     echo "       torch/NNCF INT8 export segfaults on Python 3.14. Install e.g.:" >&2
     echo "         sudo apt-get install -y python3.12 python3.12-venv" >&2
     exit 1
