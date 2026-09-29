@@ -1033,12 +1033,13 @@ def main(argv=None) -> int:
     _report_cpu_ai_accelerators()
 
     # Resilient, low-latency RTSP capture for the FFmpeg backend. nobuffer +
-    # low_delay + reorder_queue_size;0 stop the demuxer from queueing frames,
-    # which (with the latest-frame reader) keeps the preview near real time.
+    # low_delay keep the demuxer from queueing frames (with the latest-frame
+    # reader this keeps the preview near real time). Avoid avioflags;direct,
+    # reorder_queue_size;0 and the deprecated stimeout option: on some FFmpeg
+    # builds they destabilize the demuxer and can segfault on live streams.
     os.environ.setdefault(
         "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|avioflags;direct|"
-        "reorder_queue_size;0|stimeout;5000000|timeout;5000000",
+        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|timeout;5000000",
     )
     os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")
 

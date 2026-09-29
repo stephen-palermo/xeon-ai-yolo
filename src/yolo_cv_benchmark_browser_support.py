@@ -383,45 +383,82 @@ def _wait_for_tcp(host: str, port: int, timeout: float) -> bool:
     return False
 
 
-def validate_rtsp_stream(source: str) -> tuple[bool, float, str]:
-    """Validate an RTSP stream and read its advertised FPS.
+def _rtsp_probe_worker(source: str, result_queue) -> None:
+    """Open + read one RTSP frame in a child process (native segfault isolation).
 
-    Returns (is_valid, fps, error_message). Runs once at startup only.
+    OpenCV's FFmpeg demuxer can segfault on some streams/builds; running it here
+    means a crash kills only this child (nonzero exitcode) instead of the whole
+    benchmark, letting the parent report a clean error.
     """
     import time  # noqa: PLC0415
 
     import cv2  # noqa: PLC0415
 
-    # Probe TCP reachability of the RTSP endpoint first. Hammering the OpenCV
-    # FFmpeg backend with repeated open/release cycles against a dead endpoint
-    # can segfault the native demuxer, so we wait (via a cheap socket connect)
-    # until the port actually accepts connections before touching FFmpeg.
+    try:
+        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if not capture.isOpened():
+            result_queue.put((False, 0.0, f"Unable to open RTSP stream: {source}"))
+            return
+        try:
+            frame = None
+            ok = False
+            deadline = time.perf_counter() + 5.0
+            while time.perf_counter() < deadline:
+                ok, frame = capture.read()
+                if ok and frame is not None:
+                    break
+                time.sleep(0.1)
+            if not ok or frame is None:
+                result_queue.put(
+                    (False, 0.0, f"Unable to read frames from RTSP stream: {source}")
+                )
+                return
+            fps = capture.get(cv2.CAP_PROP_FPS)
+            if fps <= 0:
+                fps = 30.0
+            result_queue.put((True, fps, ""))
+        finally:
+            capture.release()
+    except Exception as exc:  # noqa: BLE001
+        result_queue.put((False, 0.0, f"RTSP probe error for {source}: {exc}"))
+
+
+def validate_rtsp_stream(source: str) -> tuple[bool, float, str]:
+    """Validate an RTSP stream and read its advertised FPS.
+
+    Returns (is_valid, fps, error_message). Runs once at startup only.
+    """
+    import multiprocessing as mp  # noqa: PLC0415
+
+    # Probe TCP reachability of the RTSP endpoint first (cheap, no FFmpeg), so we
+    # only touch the demuxer once the port actually accepts connections.
     host, port = _parse_rtsp_endpoint(source)
     if host is not None and not _wait_for_tcp(host, port, timeout=15.0):
         return False, 0.0, f"Unable to open RTSP stream: {source}"
 
-    capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-    if not capture.isOpened():
-        return False, 0.0, f"Unable to open RTSP stream: {source}"
-
+    # Run the OpenCV open/read in a separate process. If the FFmpeg backend
+    # segfaults on this stream, only the child dies and we report it cleanly
+    # instead of core-dumping the benchmark.
+    ctx = mp.get_context("spawn")
+    result_queue = ctx.Queue()
+    proc = ctx.Process(
+        target=_rtsp_probe_worker, args=(source, result_queue), daemon=True
+    )
+    proc.start()
+    proc.join(timeout=30.0)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join()
+        return False, 0.0, f"Timed out validating RTSP stream: {source}"
+    if proc.exitcode not in (0, None):
+        return False, 0.0, (
+            f"RTSP probe crashed (exit {proc.exitcode}) opening stream: {source}. "
+            "The OpenCV FFmpeg backend could not decode this stream."
+        )
     try:
-        frame = None
-        ok = False
-        deadline = time.perf_counter() + 5.0
-        while time.perf_counter() < deadline:
-            ok, frame = capture.read()
-            if ok and frame is not None:
-                break
-            time.sleep(0.1)
-        if not ok or frame is None:
-            return False, 0.0, f"Unable to read frames from RTSP stream: {source}"
-
-        fps = capture.get(cv2.CAP_PROP_FPS)
-        if fps <= 0:
-            fps = 30.0
-        return True, fps, ""
-    finally:
-        capture.release()
+        return result_queue.get_nowait()
+    except Exception:  # noqa: BLE001
+        return False, 0.0, f"Unable to validate RTSP stream: {source}"
 
 
 # ---------------------------------------------------------------------------
