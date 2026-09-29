@@ -239,18 +239,51 @@ def resolve_model_source(model_arg: str, imgsz: int | tuple[int, int]) -> str:
     return model_arg
 
 
-def build_model(model_source: str):
+def build_model(model_source: str, force_cpu_fp32: bool = False):
     """Load a YOLO26 model through OpenVINO for CPU inference.
 
     Ultralytics loads an exported ``*_openvino_model`` directory natively, so a
     concrete IR ``.xml`` path is mapped back to its parent directory.
+
+    ``force_cpu_fp32`` makes the OpenVINO CPU plugin compile at FP32 precision
+    (see :func:`_force_openvino_cpu_fp32`).
     """
     path = Path(model_source)
     model_dir = path.parent if path.suffix.lower() == ".xml" else path
 
+    if force_cpu_fp32:
+        _force_openvino_cpu_fp32()
+
     from ultralytics import YOLO  # noqa: PLC0415
 
     return YOLO(str(model_dir), task="detect")
+
+
+def _force_openvino_cpu_fp32() -> None:
+    """Force FP32 precision for OpenVINO CPU compiles.
+
+    Ultralytics only sets ``INFERENCE_PRECISION_HINT=f32`` on Windows and
+    Linux/ARM. On Linux x86-64 the CPU plugin defaults to reduced precision
+    (f16/bf16), whose oneDNN kernels segfault on some pre-production silicon
+    (e.g. Nova Lake). Wrap ``Core.compile_model`` to inject the hint for CPU.
+    """
+    try:
+        import openvino as ov  # noqa: PLC0415
+    except ImportError:
+        return
+    core_cls = ov.Core
+    if getattr(core_cls, "_fp32_cpu_patched", False):
+        return
+    original = core_cls.compile_model
+
+    def compile_model(self, model, device_name=None, config=None, *args, **kwargs):
+        if str(device_name or "").upper() in ("", "CPU", "AUTO"):
+            config = dict(config or {})
+            config.setdefault("INFERENCE_PRECISION_HINT", ov.Type.f32)
+        return original(self, model, device_name, config, *args, **kwargs)
+
+    core_cls.compile_model = compile_model
+    core_cls._fp32_cpu_patched = True
 
 
 def is_openvino_model(model_source: str) -> bool:

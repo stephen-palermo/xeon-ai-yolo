@@ -278,7 +278,10 @@ def _run_inference_loop(
             f"{model_source} -> {resolved_model_source}",
             flush=True,
         )
-    model = support.build_model(resolved_model_source)
+    # On non-AMX x86 CPUs the OpenVINO CPU plugin defaults to reduced-precision
+    # kernels that segfault on pre-production silicon (Nova Lake); force FP32.
+    force_cpu_fp32 = not _is_gpu_device(args.device) and not support.cpu_has_amx()
+    model = support.build_model(resolved_model_source, force_cpu_fp32=force_cpu_fp32)
 
     # Decode RTSP on a background thread that keeps only the newest frame, so a
     # slow inference call can't let the buffer accumulate and lag the preview.
@@ -1120,23 +1123,16 @@ def main(argv=None) -> int:
         f"Model input (static): {model_input_str} | RTSP frame size: {rtsp_frame_size_str}"
     )
 
-    # Speed lever: pin OpenVINO CPU precision. INT8 keeps its quantized ops.
-    # For float models, run BF16 only on CPUs with AMX-BF16 (server Xeon), where
-    # the BF16 kernels are well-supported and fast. Non-AMX parts (client, and
-    # pre-production AVX-512 silicon like Nova Lake whose BF16/FP16 oneDNN
-    # kernels can segfault) run native f32 for stability and best throughput.
+    # Reported precision label. The actual OpenVINO CPU precision is set at
+    # compile time in support.build_model (FP32 on non-AMX parts); the GPU
+    # plugin picks its own (FP16 native).
     if model_precision == "INT8":
-        os.environ.pop("OV_CPU_INFERENCE_PRECISION_HINT", None)
         inference_precision = "INT8"
     elif on_gpu:
-        # The Intel GPU plugin picks its own precision (FP16 native); the CPU
-        # precision hint does not apply.
         inference_precision = "FP16"
     elif support.cpu_has_amx() and support.cpu_supports_bf16():
-        os.environ["OV_CPU_INFERENCE_PRECISION_HINT"] = "bf16"
         inference_precision = "BF16"
     else:
-        os.environ["OV_CPU_INFERENCE_PRECISION_HINT"] = "f32"
         inference_precision = "FP32"
 
     # Static header snapshot, collected once before the FPS benchmark runs.
