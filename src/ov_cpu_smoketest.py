@@ -105,6 +105,30 @@ keep = ops.nms(boxes, scores, 0.5)
 print('torchvision nms OK, kept', len(keep), flush=True)
 """
 
+_TORCH_HEAVY = """
+import torch
+import torch.nn.functional as F
+print('torch', torch.__version__, 'threads', torch.get_num_threads(), flush=True)
+a = torch.rand(1, 64, 320, 320)
+w = torch.rand(64, 64, 3, 3)
+y = torch.sigmoid(F.conv2d(a, w, padding=1))
+z = torch.rand(2048, 2048) @ torch.rand(2048, 2048)
+print('torch heavy compute OK', tuple(y.shape), tuple(z.shape), flush=True)
+"""
+
+_ULTRALYTICS_1THREAD = """
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+import torch
+torch.set_num_threads(1)
+import numpy as np
+from ultralytics import YOLO
+model = YOLO(r'''{model_dir}''', task='detect')
+frame = (np.random.rand(608, 1080, 3) * 255).astype('uint8')
+r = model.predict([frame], imgsz=640, device='intel:cpu', verbose=False)
+print('ultralytics 1-thread predict OK, results:', len(r), flush=True)
+"""
+
 
 def _run(code: str) -> int:
     return subprocess.run([sys.executable, "-c", code]).returncode
@@ -123,9 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         ("raw OpenVINO (CPU f32)", _RAW_OV.format(xml=xml)),
         ("torch then OpenVINO (CPU f32)", _TORCH_THEN_OV.format(xml=xml)),
         ("torch/torchvision NMS", _TORCHVISION_NMS),
+        ("torch heavy compute", _TORCH_HEAVY),
         ("Ultralytics predict (CPU)", _ULTRALYTICS.format(model_dir=model_dir)),
         ("Ultralytics predict f32 hint (CPU)", _ULTRALYTICS_F32.format(model_dir=model_dir)),
-        ("Ultralytics predict in thread (CPU)", _ULTRALYTICS_THREAD.format(model_dir=model_dir)),
+        ("Ultralytics predict 1-thread (CPU)", _ULTRALYTICS_1THREAD.format(model_dir=model_dir)),
     ]
 
     results = []
