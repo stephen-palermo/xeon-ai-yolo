@@ -82,9 +82,13 @@ tar -xzf mediamtx_v1.19.2_linux_amd64.tar.gz
 ./mediamtx
 
 # Terminal 2 — loop a video file into the server
-sudo apt install -y ffmpeg
-ffmpeg -re -stream_loop -1 -i stairway.video.mp4 -c copy -f rtsp rtsp://localhost:8554/stream
+chmod +x stream.ffmpeg.sh
+./stream.ffmpeg.sh
 ```
+
+`stream.ffmpeg.sh` installs ffmpeg if needed and loops `stairway.video.mp4` into
+`rtsp://localhost:8554/stream`. Override the defaults with
+`./stream.ffmpeg.sh <video-file> <rtsp-url>`.
 
 ### 3. Run on the CPU
 
