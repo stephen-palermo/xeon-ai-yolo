@@ -346,16 +346,147 @@ def openvino_version() -> str:
 # ---------------------------------------------------------------------------
 # RTSP capture
 # ---------------------------------------------------------------------------
-def open_rtsp_capture(source: str):
-    """Open an RTSP stream with low-latency, resilient capture settings."""
-    import cv2  # noqa: PLC0415
+# OpenCV's bundled FFmpeg demuxer segfaults (SIGSEGV) opening RTSP on some
+# Linux/OpenVINO wheels, so RTSP capture is done by piping raw bgr24 frames from
+# an ffmpeg subprocess instead of cv2.VideoCapture. cv2 is still used elsewhere
+# for image resize/annotation; only the crashing capture backend is replaced.
+def _find_executable(name: str) -> str | None:
+    """Return the full path to an executable, or None if not on PATH."""
+    import shutil  # noqa: PLC0415
 
-    capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    return shutil.which(name)
+
+
+def _read_exact(stream, num_bytes: int) -> bytes:
+    """Read exactly num_bytes from a pipe, or fewer only at EOF."""
+    chunks: list[bytes] = []
+    remaining = num_bytes
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _ffprobe_stream_info(source: str) -> tuple[int, int, float] | None:
+    """Return (width, height, fps) for an RTSP video stream via ffprobe."""
+    import json  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    ffprobe = _find_executable("ffprobe")
+    if ffprobe is None:
+        return None
+    cmd = [
+        ffprobe, "-v", "error", "-rtsp_transport", "tcp",
+        "-select_streams", "v:0", "-show_entries",
+        "stream=width,height,avg_frame_rate,r_frame_rate",
+        "-of", "json", source,
+    ]
     try:
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    except cv2.error:
-        pass
-    return capture
+        out = subprocess.check_output(cmd, timeout=15.0, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        streams = json.loads(out).get("streams", [])
+    except json.JSONDecodeError:
+        return None
+    if not streams:
+        return None
+    info = streams[0]
+    width = int(info.get("width") or 0)
+    height = int(info.get("height") or 0)
+    if width <= 0 or height <= 0:
+        return None
+    fps = 0.0
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        rate = str(info.get(key) or "0/0")
+        num, _, den = rate.partition("/")
+        try:
+            numf, denf = float(num), float(den or 1)
+        except ValueError:
+            continue
+        if denf > 0 and numf > 0:
+            fps = numf / denf
+            break
+    if fps <= 0:
+        fps = 30.0
+    return width, height, fps
+
+
+class FFmpegCapture:
+    """Minimal RTSP capture backed by an ffmpeg subprocess (bgr24 pipe).
+
+    Exposes the small subset of the cv2.VideoCapture API the benchmark uses:
+    ``read() -> (ok, frame)`` and ``release()``.
+    """
+
+    def __init__(self, source: str, width: int, height: int, fps: float):
+        import subprocess  # noqa: PLC0415
+
+        import numpy as np  # noqa: PLC0415
+
+        self._np = np
+        self._width = width
+        self._height = height
+        self.fps = fps
+        self._frame_bytes = width * height * 3
+        ffmpeg = _find_executable("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg executable not found on PATH")
+        cmd = [
+            ffmpeg, "-nostdin", "-loglevel", "quiet",
+            "-rtsp_transport", "tcp", "-fflags", "nobuffer", "-flags", "low_delay",
+            "-i", source, "-an", "-f", "rawvideo", "-pix_fmt", "bgr24", "-",
+        ]
+        self._proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0
+        )
+
+    def read(self):
+        if self._proc.stdout is None:
+            return False, None
+        raw = _read_exact(self._proc.stdout, self._frame_bytes)
+        if len(raw) < self._frame_bytes:
+            return False, None
+        # Copy out of the immutable pipe buffer so downstream annotation can
+        # draw on the frame in place (np.frombuffer views are read-only).
+        frame = self._np.frombuffer(raw, dtype=self._np.uint8).reshape(
+            self._height, self._width, 3
+        ).copy()
+        return True, frame
+
+    def release(self) -> None:
+        proc = getattr(self, "_proc", None)
+        if proc is None:
+            return
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            proc.terminate()
+            proc.wait(timeout=2.0)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+
+
+def open_rtsp_capture(source: str):
+    """Open an RTSP stream via an ffmpeg subprocess (low-latency bgr24 pipe)."""
+    import time  # noqa: PLC0415
+
+    # Retry the probe briefly so a transient hiccup during reconnect doesn't
+    # kill the reader thread.
+    info = None
+    deadline = time.perf_counter() + 10.0
+    while time.perf_counter() < deadline:
+        info = _ffprobe_stream_info(source)
+        if info is not None:
+            break
+        time.sleep(0.5)
+    if info is None:
+        raise RuntimeError(f"Unable to probe RTSP stream: {source}")
+    width, height, fps = info
+    return FFmpegCapture(source, width, height, fps)
 
 
 def _parse_rtsp_endpoint(source: str) -> tuple[str | None, int]:
@@ -383,82 +514,38 @@ def _wait_for_tcp(host: str, port: int, timeout: float) -> bool:
     return False
 
 
-def _rtsp_probe_worker(source: str, result_queue) -> None:
-    """Open + read one RTSP frame in a child process (native segfault isolation).
-
-    OpenCV's FFmpeg demuxer can segfault on some streams/builds; running it here
-    means a crash kills only this child (nonzero exitcode) instead of the whole
-    benchmark, letting the parent report a clean error.
-    """
-    import time  # noqa: PLC0415
-
-    import cv2  # noqa: PLC0415
-
-    try:
-        capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-        if not capture.isOpened():
-            result_queue.put((False, 0.0, f"Unable to open RTSP stream: {source}"))
-            return
-        try:
-            frame = None
-            ok = False
-            deadline = time.perf_counter() + 5.0
-            while time.perf_counter() < deadline:
-                ok, frame = capture.read()
-                if ok and frame is not None:
-                    break
-                time.sleep(0.1)
-            if not ok or frame is None:
-                result_queue.put(
-                    (False, 0.0, f"Unable to read frames from RTSP stream: {source}")
-                )
-                return
-            fps = capture.get(cv2.CAP_PROP_FPS)
-            if fps <= 0:
-                fps = 30.0
-            result_queue.put((True, fps, ""))
-        finally:
-            capture.release()
-    except Exception as exc:  # noqa: BLE001
-        result_queue.put((False, 0.0, f"RTSP probe error for {source}: {exc}"))
-
-
 def validate_rtsp_stream(source: str) -> tuple[bool, float, str]:
     """Validate an RTSP stream and read its advertised FPS.
 
-    Returns (is_valid, fps, error_message). Runs once at startup only.
+    Returns (is_valid, fps, error_message). Runs once at startup only. Uses an
+    ffmpeg subprocess (not cv2.VideoCapture) so a bad OpenCV FFmpeg build can't
+    segfault the benchmark.
     """
-    import multiprocessing as mp  # noqa: PLC0415
+    import time  # noqa: PLC0415
 
-    # Probe TCP reachability of the RTSP endpoint first (cheap, no FFmpeg), so we
-    # only touch the demuxer once the port actually accepts connections.
+    if _find_executable("ffmpeg") is None or _find_executable("ffprobe") is None:
+        return False, 0.0, "ffmpeg/ffprobe not found on PATH (apt install ffmpeg)"
+
+    # Probe TCP reachability first (cheap), so we only spawn ffmpeg once the
+    # port actually accepts connections.
     host, port = _parse_rtsp_endpoint(source)
     if host is not None and not _wait_for_tcp(host, port, timeout=15.0):
         return False, 0.0, f"Unable to open RTSP stream: {source}"
 
-    # Run the OpenCV open/read in a separate process. If the FFmpeg backend
-    # segfaults on this stream, only the child dies and we report it cleanly
-    # instead of core-dumping the benchmark.
-    ctx = mp.get_context("spawn")
-    result_queue = ctx.Queue()
-    proc = ctx.Process(
-        target=_rtsp_probe_worker, args=(source, result_queue), daemon=True
-    )
-    proc.start()
-    proc.join(timeout=30.0)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-        return False, 0.0, f"Timed out validating RTSP stream: {source}"
-    if proc.exitcode not in (0, None):
-        return False, 0.0, (
-            f"RTSP probe crashed (exit {proc.exitcode}) opening stream: {source}. "
-            "The OpenCV FFmpeg backend could not decode this stream."
-        )
+    info = _ffprobe_stream_info(source)
+    if info is None:
+        return False, 0.0, f"Unable to open RTSP stream: {source}"
+
+    capture = FFmpegCapture(source, *info)
     try:
-        return result_queue.get_nowait()
-    except Exception:  # noqa: BLE001
-        return False, 0.0, f"Unable to validate RTSP stream: {source}"
+        deadline = time.perf_counter() + 10.0
+        while time.perf_counter() < deadline:
+            ok, frame = capture.read()
+            if ok and frame is not None:
+                return True, capture.fps, ""
+        return False, 0.0, f"Unable to read frames from RTSP stream: {source}"
+    finally:
+        capture.release()
 
 
 # ---------------------------------------------------------------------------
