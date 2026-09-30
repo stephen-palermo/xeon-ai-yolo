@@ -215,5 +215,67 @@ are directly comparable.</p>
 
 <p>Both serve the live dashboard at <code>http://&lt;host&gt;:8080</code>.</p>
 
+<h3>6. Uncapped throughput: CPU vs GPU</h3>
+
+<p>The <code>1x1x8</code> scripts throttle input to <code>--input-fps 8</code>, so <code>FPS out</code> plateaus near
+8 on both devices and only latency separates them. To measure true maximum
+throughput, drop the input-FPS cap and let each device run as fast as it can.
+Start the RTSP stream first (Terminals 1 and 2 from step 2), then run:</p>
+
+<pre><code><span class="comment"># CPU — uncapped, single stream pinned to core 0</span>
+taskset -c 0 python src/yolo-cv-benchmark.py \
+        --model models/yolo26n_640x640_openvino_model \
+        --rtsp-frame-size 1080x608 \
+        --imgsz 640x640 \
+        --rtsp-urls "rtsp://localhost:8554/stream" \
+        --host 0.0.0.0 --port 8080 --classes 0,2,3,5,7</code></pre>
+
+<pre><code><span class="comment"># GPU — uncapped, single stream on the Nova Lake iGPU</span>
+python src/yolo-cv-benchmark.py \
+        --gpu \
+        --model models/yolo26n_640x640_openvino_model \
+        --rtsp-frame-size 1080x608 \
+        --imgsz 640x640 \
+        --rtsp-urls "rtsp://localhost:8554/stream" \
+        --host 0.0.0.0 --port 8080 --classes 0,2,3,5,7</code></pre>
+
+<p>Both use the <strong>same FP16 IR</strong> at <code>640x640</code> over the same stream, so the resulting
+<code>FPS out</code> and <code>Latency</code> are directly comparable.</p>
+
+<h4>Results (single stream, YOLO26n @ 640×640, 30 FPS input)</h4>
+
+<table>
+<thead>
+<tr><th>Metric</th><th>CPU (<code>intel:cpu</code>, 1 core)</th><th>GPU (<code>intel:gpu</code>, GPU.0)</th></tr>
+</thead>
+<tbody>
+<tr><td>Compute precision</td><td>FP32</td><td>FP16 (native)</td></tr>
+<tr><td>Inference hardware</td><td>1 CPU core (<code>taskset -c 0</code>)</td><td>iGPU (+ CPU threads for pre/post)</td></tr>
+<tr><td><strong>Steady-state FPS out</strong></td><td><strong>~22.8</strong></td><td><strong>~27.0</strong></td></tr>
+<tr><td>Latency</td><td>steady ~43 ms</td><td>~7–10 ms (min), bursty to ~45 ms</td></tr>
+<tr><td>CPU utilization</td><td>100% (1 core saturated)</td><td>~80% (pre/post + feeding GPU)</td></tr>
+</tbody>
+</table>
+
+<p><strong>Takeaways</strong></p>
+
+<ul>
+<li>The iGPU delivers ~18% higher throughput (~27 vs ~22.8 FPS) than a single CPU
+core, while leaving CPU headroom, and its raw inference latency (~7–10 ms) is
+several times lower than the CPU's ~43 ms.</li>
+<li>Both sit below the 30 FPS input: the CPU is compute-bound (1 core at 100%); the
+GPU has CPU headroom, so it's limited by the single-stream pipeline, not the CPU.</li>
+</ul>
+
+<blockquote>
+<p>Caveats for a fair read: the CPU run is pinned to <strong>one core</strong> (<code>taskset -c 0</code>),
+so this is <em>1 CPU core</em> vs <em>the whole iGPU</em> — a full-socket CPU run scales much
+higher. Precision also differs (CPU FP32 for stability on this non-AMX silicon
+vs native GPU FP16). For CPU-socket vs iGPU, drop <code>taskset -c 0</code>; for scaling,
+use the <code>8x8x8</code> scripts.</p>
+</blockquote>
+
+<p><img src="docs/nova_lake_cpu_vs_gpu.png" alt="Nova Lake CPU vs GPU" style="max-width:100%;height:auto;"></p>
+
 </body>
 </html>
