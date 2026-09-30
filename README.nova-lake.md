@@ -165,3 +165,29 @@ python src/yolo-cv-benchmark.py \
 
 Both use the **same FP16 IR** at `640x640` over the same stream, so the resulting
 `FPS out` and `Latency` are directly comparable.
+
+#### Results (single stream, YOLO26n @ 640×640, 30 FPS input)
+
+| Metric | CPU (`intel:cpu`, 1 core) | GPU (`intel:gpu`, GPU.0) |
+|---|---|---|
+| Compute precision | FP32 | FP16 (native) |
+| Inference hardware | 1 CPU core (`taskset -c 0`) | iGPU (+ CPU threads for pre/post) |
+| **Steady-state FPS out** | **~22.8** | **~27.0** |
+| Latency | steady ~43 ms | ~7–10 ms (min), bursty to ~45 ms |
+| CPU utilization | 100% (1 core saturated) | ~80% (pre/post + feeding GPU) |
+
+**Takeaways**
+
+- The iGPU delivers ~18% higher throughput (~27 vs ~22.8 FPS) than a single CPU
+  core, while leaving CPU headroom, and its raw inference latency (~7–10 ms) is
+  several times lower than the CPU's ~43 ms.
+- Both sit below the 30 FPS input: the CPU is compute-bound (1 core at 100%); the
+  GPU has CPU headroom, so it's limited by the single-stream pipeline, not the CPU.
+
+> Caveats for a fair read: the CPU run is pinned to **one core** (`taskset -c 0`),
+> so this is *1 CPU core* vs *the whole iGPU* — a full-socket CPU run scales much
+> higher. Precision also differs (CPU FP32 for stability on this non-AMX silicon
+> vs native GPU FP16). For CPU-socket vs iGPU, drop `taskset -c 0`; for scaling,
+> use the `8x8x8` scripts.
+
+![Nova Lake CPU vs GPU](docs/nova_lake_cpu_vs_gpu.png)
