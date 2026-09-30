@@ -134,3 +134,34 @@ Start the RTSP stream first (Terminals 1 and 2 from step 2), then run:
 ```
 
 Both serve the live dashboard at `http://<host>:8080`.
+
+### 6. Uncapped throughput: CPU vs GPU
+
+The `1x1x8` scripts throttle input to `--input-fps 8`, so `FPS out` plateaus near
+8 on both devices and only latency separates them. To measure true maximum
+throughput, drop the input-FPS cap and let each device run as fast as it can.
+Start the RTSP stream first (Terminals 1 and 2 from step 2), then run:
+
+```bash
+# CPU — uncapped, single stream pinned to core 0
+taskset -c 0 python src/yolo-cv-benchmark.py \
+        --model models/yolo26n_640x640_openvino_model \
+        --rtsp-frame-size 1080x608 \
+        --imgsz 640x640 \
+        --rtsp-urls "rtsp://localhost:8554/stream" \
+        --host 0.0.0.0 --port 8080 --classes 0,2,3,5,7
+```
+
+```bash
+# GPU — uncapped, single stream on the Nova Lake iGPU
+python src/yolo-cv-benchmark.py \
+        --gpu \
+        --model models/yolo26n_640x640_openvino_model \
+        --rtsp-frame-size 1080x608 \
+        --imgsz 640x640 \
+        --rtsp-urls "rtsp://localhost:8554/stream" \
+        --host 0.0.0.0 --port 8080 --classes 0,2,3,5,7
+```
+
+Both use the **same FP16 IR** at `640x640` over the same stream, so the resulting
+`FPS out` and `Latency` are directly comparable.
