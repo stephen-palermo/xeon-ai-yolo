@@ -153,6 +153,51 @@ CPU and the iGPU). INT8 (AVX-512 VNNI) remains the target quantized path once
 calibration is stable on production silicon.</p>
 </blockquote>
 
+<h2>How OpenVINO exposes the CPU accelerators</h2>
+
+<p>This benchmark pins to <strong>OpenVINO 2026.4</strong> (<code>openvino==2026.4.0</code>), installed by
+<code>setup.openvino_2026.4.nova-lake.sh</code>. OpenVINO is what turns the raw CPU
+instruction-set accelerators listed above into real YOLO26 speedups — the
+Ultralytics model is exported to an <strong>OpenVINO IR</strong> (<code>.xml</code> + <code>.bin</code>) and
+executed by the OpenVINO CPU plugin, which maps each network layer onto the best
+available ISA kernel at runtime.</p>
+
+<p>Technically, the CPU plugin builds on Intel's <strong>oneDNN</strong> library, which ships
+multiple hand-tuned kernel implementations (JIT micro-kernels) for every
+primitive — convolution, GEMM, pooling, element-wise. At model-load time the
+plugin runs <strong>CPU dispatch</strong>: it reads the processor's capability flags (the same
+<code>lscpu</code> <code>Flags</code> surfaced earlier) and selects the widest kernel the silicon
+supports. On Nova Lake that means:</p>
+
+<ul>
+<li><strong>FP16/FP32 convolution and GEMM</strong> are vectorized through the <strong>AVX-512</strong>
+foundation and <strong>AVX-512 FP16/BF16</strong> units, so the dense math at the heart of
+YOLO26 runs at full SIMD width.</li>
+<li><strong>INT8</strong> paths (once calibration is stable) dispatch to the <strong>AVX-512 VNNI /
+AVX-VNNI</strong> <code>VPDPBUSD</code> dot-product kernels rather than AMX, since this
+pre-production part reports no tile unit.</li>
+<li>OpenVINO's <strong>graph optimizations</strong> — operator fusion (conv + bias + activation),
+constant folding, and memory-layout conversion to the oneDNN-preferred
+blocked/NHWC format — keep those vector units fed and cut memory traffic, which
+is exactly where the byte-permute (<strong>VBMI</strong>) and bit-manipulation accelerators
+help with packing/unpacking around conv layers.</li>
+</ul>
+
+<p>The net effect: the FP16 IR exported here is hardware-agnostic, and the OpenVINO
+runtime decides per-layer whether to execute on the CPU's AI ISA kernels or — via
+the <code>intel:gpu</code> device — on the Nova Lake iGPU, which is what makes the
+CPU-vs-GPU comparison in this benchmark an apples-to-apples one.</p>
+
+<blockquote>
+<p><strong>Future updates will be necessary.</strong> Nova Lake is pre-production silicon, and
+OpenVINO 2026.4 predates its official launch, so the CPU plugin currently
+dispatches Nova Lake using the closest known microarchitecture profile rather
+than a Nova Lake-specific one. Once <strong>Intel officially releases Nova Lake</strong> and
+ships <strong>official OpenVINO support</strong> for it, this benchmark should be re-pinned
+to that OpenVINO release to pick up Nova Lake-tuned oneDNN kernels, the correct
+CPU dispatch, and (pending stable calibration) the INT8/VNNI quantized path.</p>
+</blockquote>
+
 <h2>Setup and run the benchmarks</h2>
 
 <h3>1. Create the virtual environment</h3>
