@@ -87,6 +87,12 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 echo "Installing Ultralytics (YOLO26), headless OpenCV, and NNCF (INT8 export)"
 pip install ultralytics opencv-python-headless nncf
+# Ultralytics depends on the GUI opencv-python, which gets installed alongside
+# (and clobbers) the headless build and then fails with "libGL.so.1: cannot
+# open shared object file" on headless hosts. Drop the GUI build and force the
+# headless wheel to own the cv2/ directory.
+pip uninstall -y opencv-python opencv-python-headless
+pip install --force-reinstall --no-deps opencv-python-headless
 
 echo "Exporting INT8 YOLO26 models for 640x360 and 1280x768 streams to OpenVINO IR"
 python ./src/download_yolo26.py --int8 --imgsz 640x360 640x480 640x640 720p 1280x768
